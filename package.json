@@ -1,0 +1,26 @@
+{
+  "name": "servease",
+  "version": "1.0.0",
+  "description": "Full-stack real-time worker platform",
+  "scripts": {
+    "start": "concurrently \"npm run server\" \"npm run client\"",
+    "dev": "npm start",
+    "server": "cd backend && npm run dev",
+    "client": "cd frontend && npm run dev",
+    "install-all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+  },
+  "dependencies": {
+    "@react-google-maps/api": "^2.20.8",
+    "axios": "^1.14.0",
+    "concurrently": "^9.2.1",
+    "lucide-react": "^1.7.0",
+    "react-router-dom": "^7.14.0",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^3.4.19",
+    "vite": "^8.0.5"
+  }
+}
