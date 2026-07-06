@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "predev": "kill-port 5001 || echo Port cleanup skipped",
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -26,6 +27,7 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
+    "kill-port": "^2.0.1",
     "nodemon": "^3.1.14"
   }
 }

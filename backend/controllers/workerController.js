@@ -29,25 +29,17 @@ exports.getWorkers = async (req, res, next) => {
       minRating,
       maxPrice,
       available,
-      sortBy = 'aiScore',
-      sortOrder = 'desc'
+      sortBy,
+      sortOrder
     } = req.query;
+    const rawSearch = normalizeSearchTerm(search);
 
-    const rawSearch = search ? search.trim() : '';
-    const normalizedSearch = normalizeSearchTerm(rawSearch);
     const searchConditions = [];
 
     if (rawSearch) {
       searchConditions.push(
-        { name: { $regex: rawSearch, $options: 'i' } },
-        { skills: { $elemMatch: { $regex: rawSearch, $options: 'i' } } }
-      );
-    }
-
-    if (normalizedSearch && normalizedSearch !== rawSearch.toLowerCase()) {
-      searchConditions.push(
-        { name: { $regex: normalizedSearch, $options: 'i' } },
-        { skills: { $elemMatch: { $regex: normalizedSearch, $options: 'i' } } }
+        { skills: { $regex: rawSearch, $options: 'i' } },
+        { name: { $regex: rawSearch, $options: 'i' } }
       );
     }
 
@@ -120,6 +112,9 @@ exports.getWorkers = async (req, res, next) => {
     pipeline.push(
       {
         $addFields: {
+          availabilityScore: {
+            $cond: ['$available', 1000, -1000]
+          },
           aiScore: {
             $subtract: [
               {
@@ -129,6 +124,22 @@ exports.getWorkers = async (req, res, next) => {
                 ]
               },
               { $multiply: ['$distance', 0.002] }
+            ]
+          },
+          recommendationScore: {
+            $add: [
+              {
+                $subtract: [
+                  {
+                    $add: [
+                      { $multiply: ['$rating', 20] },
+                      { $divide: [1000, { $cond: [{ $eq: ['$pricePerHour', 0] }, 1, '$pricePerHour'] }] }
+                    ]
+                  },
+                  { $multiply: ['$distance', 0.002] }
+                ]
+              },
+              '$availabilityScore'
             ]
           }
         }
@@ -157,6 +168,7 @@ exports.getWorkers = async (req, res, next) => {
         fallbackSort.aiScore = order;
         fallbackSort.rating = -1;
         fallbackSort.pricePerHour = 1;
+        fallbackSort.available = -1;
       }
 
       const fallbackWorkers = await Worker.find(fallbackFilter)
@@ -238,9 +250,12 @@ exports.hireWorker = async (req, res, next) => {
 
 exports.getWorkerHires = async (req, res, next) => {
   try {
-    const workerId = req.user.id;
+    const workerProfile = await Worker.findOne({ user: req.user.id }).select('_id');
+    if (!workerProfile) {
+      return res.status(404).json({ success: false, message: 'Worker profile not found' });
+    }
 
-    const hires = await Hire.find({ worker: workerId })
+    const hires = await Hire.find({ worker: workerProfile._id })
       .populate('user', 'name email')
       .sort({ createdAt: -1 });
 
@@ -315,7 +330,10 @@ exports.getUserHires = async (req, res, next) => {
 exports.updateWorkerAvailability = async (req, res, next) => {
   try {
     const { available, lat, lng } = req.body;
-    const workerId = req.user.id;
+    const workerProfile = await Worker.findOne({ user: req.user.id }).select('_id');
+    if (!workerProfile) {
+      return res.status(404).json({ success: false, message: 'Worker profile not found' });
+    }
 
     const update = { available };
     
@@ -327,7 +345,7 @@ exports.updateWorkerAvailability = async (req, res, next) => {
       update.lastLocationUpdate = new Date();
     }
 
-    const worker = await Worker.findByIdAndUpdate(workerId, update, { new: true });
+    const worker = await Worker.findByIdAndUpdate(workerProfile._id, update, { new: true });
     
     if (!worker) {
       return res.status(404).json({ success: false, message: 'Worker not found' });
@@ -336,7 +354,7 @@ exports.updateWorkerAvailability = async (req, res, next) => {
     // Broadcast to all connected clients via socket
     const io = req.app.get('io');
     if (io) {
-      io.emit('worker-status-updated', {
+      io.emit('worker-availability-changed', {
         workerId: worker._id,
         available: worker.available,
         location: worker.location

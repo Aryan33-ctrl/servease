@@ -30,25 +30,43 @@ const Login = () => {
     setLoading(true);
     
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const payload = isLogin 
-        ? { email: formData.email, password: formData.password }
-        : formData;
-
-      const res = await api.post(endpoint, payload);
-      
       if (isLogin) {
+        // Login flow
+        const res = await api.post('/api/auth/login', { 
+          email: formData.email, 
+          password: formData.password 
+        });
         login(res.data.data.user, res.data.data.token);
         navigate('/dashboard');
       } else {
-        // Registration successful, redirect to email verification
-        navigate('/verify-email', { state: { email: formData.email } });
+        // Signup flow - send OTP first
+        const res = await api.post('/api/auth/send-otp', {
+          name: formData.name,
+          email: formData.email,
+          role: formData.role === 'user' ? 'client' : 'worker'
+        });
+        // Redirect to email verification page
+        navigate('/verify-email', { 
+          state: { 
+            email: formData.email,
+            name: formData.name,
+            role: formData.role
+          } 
+        });
       }
     } catch (err) {
-      if (err.response?.data?.errors) {
-        setError(err.response.data.errors.map(e => e.msg).join(', '));
+      const responseData = err.response?.data;
+
+      if (responseData?.errors) {
+        setError(responseData.errors.map((e) => e.msg).join(', '));
+      } else if (typeof responseData === 'string') {
+        setError(responseData);
+      } else if (responseData?.message) {
+        setError(responseData.message);
+      } else if (err.request) {
+        setError('Cannot reach server. Please make sure the backend is running.');
       } else {
-        setError(err.response?.data?.message || 'Something went wrong');
+        setError(err.message || 'Something went wrong');
       }
     } finally {
       setLoading(false);

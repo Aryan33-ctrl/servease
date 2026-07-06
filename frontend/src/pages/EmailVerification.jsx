@@ -32,8 +32,14 @@ const EmailVerification = () => {
     setLoading(true);
 
     try {
-      const res = await api.post('/api/auth/verify-email', { email, otp });
-      navigate('/login', { state: { message: 'Email verified successfully! Please log in.' } });
+      const res = await api.post('/api/auth/verify-otp', { email, otp });
+      // Redirect to set password page with verification token
+      navigate('/set-password', { 
+        state: { 
+          verificationToken: res.data.data.verificationToken,
+          email: email
+        } 
+      });
     } catch (err) {
       setError(err.response?.data?.message || 'Verification failed');
     } finally {
@@ -46,8 +52,13 @@ const EmailVerification = () => {
     setError('');
 
     try {
-      await api.post('/api/auth/resend-otp', { email });
+      await api.post('/api/auth/send-otp', {
+        name: location.state?.name,
+        email: email,
+        role: location.state?.role === 'user' ? 'client' : 'worker'
+      });
       setCountdown(60); // 60 seconds cooldown
+      setOtp(''); // Clear the OTP input
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to resend OTP');
     } finally {

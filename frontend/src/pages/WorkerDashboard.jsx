@@ -5,6 +5,7 @@ import { AuthContext } from '../context/AuthContext';
 import { Map, Star, DollarSign, Zap, Clock, ShieldCheck, CheckCircle2, User, Bell, Check, X, MessageSquare, Settings } from 'lucide-react';
 import Toast from '../components/Toast';
 import io from 'socket.io-client';
+import { getApiBaseUrl, isRealtimeEnabled } from '../utils/api';
 
 const WorkerDashboard = () => {
   const [hireRequests, setHireRequests] = useState([]);
@@ -13,6 +14,7 @@ const WorkerDashboard = () => {
   const [socket, setSocket] = useState(null);
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
+  const realtimeEnabled = isRealtimeEnabled();
 
   useEffect(() => {
     if (!user) {
@@ -27,19 +29,28 @@ const WorkerDashboard = () => {
 
     fetchHireRequests();
 
-    // Set up socket connection
-    const token = localStorage.getItem('token');
-    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-      auth: { token }
-    });
-    setSocket(newSocket);
+    let newSocket = null;
 
-    newSocket.on('hireRequest', (data) => {
-      setToast({ message: `New hire request from ${data.user.name}!`, type: 'info' });
-      fetchHireRequests(); // Refresh the list
-    });
+    if (realtimeEnabled) {
+      // Set up socket connection
+      const token = localStorage.getItem('token');
+      newSocket = io(getApiBaseUrl(), {
+        auth: { token }
+      });
+      setSocket(newSocket);
+
+      newSocket.on('hireRequest', (data) => {
+        setToast({ message: `New hire request from ${data.user.name}!`, type: 'info' });
+        fetchHireRequests(); // Refresh the list
+      });
+    }
+
+    const refreshTimer = setInterval(() => {
+      fetchHireRequests();
+    }, 20000);
 
     return () => {
+      clearInterval(refreshTimer);
       if (newSocket) newSocket.disconnect();
     };
   }, [user, navigate]);

@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useRef } from 'react';
 import api from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { MapPin, Zap, Clock, Navigation, Power } from 'lucide-react';
 import Toast from '../components/Toast';
 import io from 'socket.io-client';
+import { getApiBaseUrl, isRealtimeEnabled } from '../utils/api';
 
 const WorkerSettings = () => {
   const [available, setAvailable] = useState(true);
@@ -14,8 +15,12 @@ const WorkerSettings = () => {
   const [toast, setToast] = useState(null);
   const [socket, setSocket] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [isLiveTracking, setIsLiveTracking] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
+  const watchIdRef = useRef(null);
+  const realtimeEnabled = isRealtimeEnabled();
 
   useEffect(() => {
     if (!user) {
@@ -30,12 +35,38 @@ const WorkerSettings = () => {
 
     // Setup socket connection
     const token = localStorage.getItem('token');
-    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-      auth: { token }
-    });
-    setSocket(newSocket);
+    let newSocket = null;
 
-    // Get user's current location once
+    if (realtimeEnabled) {
+      newSocket = io(getApiBaseUrl(), {
+        auth: { token }
+      });
+
+      // Socket connection status logging
+      newSocket.on('connect', () => {
+        console.log('[Worker] ✅ Socket connected. Worker ID:', user.id);
+        setSocketConnected(true);
+        setToast({ message: '✅ Connected to live tracking server', type: 'success' });
+      });
+
+      newSocket.on('disconnect', () => {
+        console.log('[Worker] ❌ Socket disconnected');
+        setSocketConnected(false);
+        setIsLiveTracking(false);
+      });
+
+      newSocket.on('connect_error', (err) => {
+        console.error('[Worker] 🔴 Socket connection error:', err.message);
+        setToast({ message: `Connection error: ${err.message}`, type: 'error' });
+      });
+
+      setSocket(newSocket);
+    } else {
+      setSocketConnected(false);
+      setSocket(null);
+    }
+
+    // Get user's current location once, then auto-start live tracking
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -43,15 +74,33 @@ const WorkerSettings = () => {
             lat: position.coords.latitude,
             lng: position.coords.longitude
           };
+          console.log('[Worker] 📍 Initial location:', coords);
           setLocation(coords);
+          // Auto-start live tracking after getting initial location
+          setTimeout(() => startLiveTracking(newSocket, coords), 500);
         },
         (error) => {
+          console.error('[Worker] ❌ Geolocation error:', error.code, error.message);
           setLocationError('Location access denied. Please enable location services.');
+          setToast({ message: 'Please enable location access to use live tracking', type: 'error' });
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
         }
       );
     }
 
-    return () => newSocket.disconnect();
+    return () => {
+      if (watchIdRef.current) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        console.log('[Worker] Cleared geolocation watch');
+      }
+      if (newSocket) {
+        newSocket.disconnect();
+      }
+    };
   }, [user, navigate]);
 
   const handleAvailabilityToggle = async () => {
@@ -124,26 +173,45 @@ const WorkerSettings = () => {
     }
   };
 
-  const handleStartLiveTracking = () => {
-    // Enable continuous location tracking
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
+  const startLiveTracking = (socketInstance, initialLocation) => {
+    if (watchIdRef.current) {
+      console.log('[Worker] Live tracking already running');
+      return;
+    }
+
+    console.log('[Worker] 🚀 Starting live tracking from', initialLocation);
+    setIsLiveTracking(true);
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      async (position) => {
         const newLocation = {
           lat: position.coords.latitude,
           lng: position.coords.longitude
         };
+        console.log('[Worker] 📍 Location update:', newLocation, '| Accuracy:', position.coords.accuracy.toFixed(0) + 'm');
         setLocation(newLocation);
+        setLastUpdate(new Date());
 
-        // Send update every few seconds
-        if (socket) {
-          socket.emit('update-location', {
+        // Emit location update to server via socket
+        await api.put('/api/workers/availability', {
+          available,
+          lat: newLocation.lat,
+          lng: newLocation.lng
+        });
+
+        if (socketInstance && socketInstance.connected) {
+          console.log('[Worker] 📡 Emitting update-location to server');
+          socketInstance.emit('update-location', {
             lat: newLocation.lat,
             lng: newLocation.lng
           });
+        } else {
+          console.warn('[Worker] ⚠️ Socket not connected, cannot emit location');
         }
       },
       (error) => {
-        setLocationError('Live tracking failed. Keep manual updates enabled instead.');
+        console.error('[Worker] ❌ Geolocation watch error:', error.code, error.message);
+        setLocationError('Live tracking paused. Ensure location access is enabled.');
       },
       {
         enableHighAccuracy: true,
@@ -151,11 +219,25 @@ const WorkerSettings = () => {
         maximumAge: 0
       }
     );
+  };
 
-    setToast({ message: 'Live tracking started! Your location is updating in real-time.', type: 'success' });
+  const handleStartLiveTracking = () => {
+    if (!location) {
+      setToast({ message: 'Please enable location access first', type: 'error' });
+      return;
+    }
+    startLiveTracking(socket, location);
+    setToast({ message: '🟢 Live tracking started! Your location updates in real-time.', type: 'success' });
+  };
 
-    // Return cleanup function
-    return () => navigator.geolocation.clearWatch(watchId);
+  const handleStopLiveTracking = () => {
+    if (watchIdRef.current) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+      setIsLiveTracking(false);
+      console.log('[Worker] ⏹️ Live tracking stopped');
+      setToast({ message: 'Live tracking stopped', type: 'info' });
+    }
   };
 
   return (
@@ -214,6 +296,22 @@ const WorkerSettings = () => {
             Location Sharing
           </h2>
 
+          {/* Socket Status */}
+          <div className={`mb-6 p-4 rounded-2xl border ${socketConnected ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
+            <p className={`text-sm font-medium ${socketConnected ? 'text-green-900' : 'text-red-900'}`}>
+              {socketConnected ? '✅ Server Connection: Active' : '❌ Server Connection: Offline'}
+            </p>
+          </div>
+
+          {/* Live Tracking Status */}
+          {isLiveTracking && (
+            <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl border border-green-200 animate-pulse">
+              <p className="text-sm text-green-900 font-bold">
+                🟢 Live Tracking: ACTIVE - Your location updates every 5 seconds
+              </p>
+            </div>
+          )}
+
           {locationError && (
             <div className="mb-6 p-4 bg-orange-50 text-orange-700 rounded-2xl text-sm font-medium border border-orange-100">
               ⚠️ {locationError}
@@ -240,17 +338,27 @@ const WorkerSettings = () => {
               className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <MapPin className="w-5 h-5" />
-              Share Current Location
+              Share Current Location (One-Time)
             </button>
 
-            <button
-              onClick={handleStartLiveTracking}
-              disabled={loading || !location}
-              className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-2xl font-bold transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <Navigation className="w-5 h-5" />
-              Start Live Tracking
-            </button>
+            {!isLiveTracking ? (
+              <button
+                onClick={handleStartLiveTracking}
+                disabled={loading || !location}
+                className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white rounded-2xl font-bold transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <Navigation className="w-5 h-5" />
+                Start Live Tracking
+              </button>
+            ) : (
+              <button
+                onClick={handleStopLiveTracking}
+                className="w-full px-6 py-4 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-bold transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2"
+              >
+                <Power className="w-5 h-5" />
+                Stop Live Tracking
+              </button>
+            )}
           </div>
 
           <div className="mt-4 p-4 bg-gray-50 rounded-2xl border border-gray-100">
@@ -277,6 +385,18 @@ const WorkerSettings = () => {
               <p className="text-sm text-gray-600 mb-1">Map Visibility</p>
               <p className="text-xl font-bold text-gray-900">
                 {available && location ? '📍 Visible' : '🚫 Hidden'}
+              </p>
+            </div>
+            <div className="p-4 bg-white rounded-2xl border border-gray-100">
+              <p className="text-sm text-gray-600 mb-1">Live Tracking</p>
+              <p className="text-xl font-bold text-gray-900">
+                {isLiveTracking ? '🟢 Active' : '⚪ Inactive'}
+              </p>
+            </div>
+            <div className="p-4 bg-white rounded-2xl border border-gray-100">
+              <p className="text-sm text-gray-600 mb-1">Server</p>
+              <p className="text-xl font-bold text-gray-900">
+                {socketConnected ? '🟢 Connected' : '🔴 Disconnected'}
               </p>
             </div>
           </div>

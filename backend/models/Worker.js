@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const WorkerSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User',
+    unique: true,
+    sparse: true
+  },
   name: {
     type: String,
     required: true
@@ -14,7 +20,8 @@ const WorkerSchema = new mongoose.Schema({
   },
   pricePerHour: {
     type: Number,
-    required: true
+    required: true,
+    default: 0
   },
   available: {
     type: Boolean,

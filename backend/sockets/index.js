@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Worker = require('../models/Worker');
 
 module.exports = (io) => {
   // Socket Middleware for Authentication Context
@@ -30,23 +31,37 @@ module.exports = (io) => {
   });
 
   io.on('connection', (socket) => {
-    console.log(`[Socket] Authorized Connection: ${socket.user.name} (${socket.user.role}) [ID: ${socket.id}]`);
+    console.log(`[Socket] ✅ New connection: ${socket.user.name} (${socket.user.role}) [Socket ID: ${socket.id}]`);
 
     // Join worker-specific room for hire notifications
     if (socket.user.role === 'worker') {
-      socket.join(`worker_${socket.user.id}`);
+      Worker.findOne({ user: socket.user.id }).select('_id').then((workerProfile) => {
+        if (workerProfile) {
+          socket.join(`worker_${workerProfile._id}`);
+          console.log(`[Socket] 👤 Worker ${socket.user.name} joined room: worker_${workerProfile._id}`);
+        } else {
+          console.warn(`[Socket] ⚠️ Worker profile not found for user ${socket.user.name}`);
+        }
+      }).catch((err) => {
+        console.error('[Socket] Error joining worker room:', err.message);
+      });
     }
 
     // Join user-specific room for hire updates
     socket.join(`user_${socket.user.id}`);
+    console.log(`[Socket] 📬 Joined user room: user_${socket.user.id}`);
 
     // Listen for hire response from worker
     socket.on('hireResponse', async (data) => {
       const { hireId, status, message } = data;
       try {
         const Hire = require('../models/Hire');
+        const workerProfile = await Worker.findOne({ user: socket.user.id }).select('_id');
+        if (!workerProfile) {
+          return;
+        }
         const hire = await Hire.findById(hireId).populate('user', 'name email');
-        if (hire && hire.worker.toString() === socket.user.id) {
+        if (hire && hire.worker.toString() === workerProfile._id.toString()) {
           hire.status = status;
           if (message) hire.message = message;
           await hire.save();
@@ -69,15 +84,40 @@ module.exports = (io) => {
       // Security: Only allow workers to physically broadcast location updates, users cannot spoof this event!
       if (socket.user.role === 'worker') {
         const { lat, lng } = data;
+        console.log(`[Socket] 📍 Received location update from worker ${socket.user.name}: ${lat}, ${lng}`);
         
-        // Broadcast the accurately verified worker ID and updated location geoPoint back to all clients
-        socket.broadcast.emit('worker-location-updated', {
-          workerId: socket.user.id,
-          location: {
-            type: 'Point',
-            coordinates: [lng, lat]
+        Worker.findOneAndUpdate(
+          { user: socket.user.id },
+          {
+            location: {
+              type: 'Point',
+              coordinates: [lng, lat]
+            },
+            lastLocationUpdate: new Date()
+          },
+          { new: true }
+        ).then((worker) => {
+          if (!worker) {
+            console.error(`[Socket] ❌ Worker profile not found for user ${socket.user.id}`);
+            return;
           }
+          
+          console.log(`[Socket] 💾 Updated worker ${worker._id} location in DB`);
+          console.log(`[Socket] 📡 Broadcasting worker-location-updated to all clients`);
+          
+          // Broadcast the accurately verified worker profile ID and updated location geoPoint.
+          socket.broadcast.emit('worker-location-updated', {
+            workerId: worker._id,
+            location: {
+              type: 'Point',
+              coordinates: [lng, lat]
+            }
+          });
+        }).catch((err) => {
+          console.error('[Socket] Error updating worker location:', err.message);
         });
+      } else {
+        console.warn(`[Socket] ⚠️ Non-worker user ${socket.user.name} tried to emit update-location`);
       }
     });
 
@@ -88,6 +128,8 @@ module.exports = (io) => {
           const Worker = require('../models/Worker');
           const { available, lat, lng } = data;
           
+          console.log(`[Socket] 🔄 Worker ${socket.user.name} status update: available=${available}, location=${lat},${lng}`);
+          
           const update = { available };
           if (lat && lng) {
             update.location = {
@@ -95,19 +137,27 @@ module.exports = (io) => {
               coordinates: [lng, lat]
             };
             update.lastLocationUpdate = new Date();
+            console.log(`[Socket] 📍 Updating location for worker ${socket.user.name}`);
           }
           
-          const worker = await Worker.findByIdAndUpdate(socket.user.id, update, { new: true });
+          const worker = await Worker.findOneAndUpdate({ user: socket.user.id }, update, { new: true });
+          if (!worker) {
+            console.warn(`[Socket] ⚠️ Worker profile not found for user ${socket.user.name}`);
+            return;
+          }
           
+          console.log(`[Socket] 📡 Broadcasting worker-availability-changed`);
           // Broadcast to all clients
-          socket.broadcast.emit('worker-status-updated', {
+          socket.broadcast.emit('worker-availability-changed', {
             workerId: worker._id,
             available: worker.available,
             location: worker.location
           });
         } catch (err) {
-          console.error('Error updating worker status:', err);
+          console.error('[Socket] Error updating worker status:', err.message);
         }
+      } else {
+        console.warn(`[Socket] ⚠️ Non-worker user ${socket.user.name} tried to emit worker-status-changed`);
       }
     });
 

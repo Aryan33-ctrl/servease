@@ -2,7 +2,7 @@ import React, { useEffect, useState, useContext } from 'react';
 import api from '../utils/api';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
-import { Star, MessageSquare, CheckCircle2, Clock, User, DollarSign } from 'lucide-react';
+import { Star, MessageSquare, CheckCircle2, Clock, User, DollarSign, MapPin } from 'lucide-react';
 import Toast from '../components/Toast';
 
 const UserHires = () => {
@@ -204,10 +204,17 @@ const UserHires = () => {
                 )}
 
                 {hire.status === 'accepted' && (
-                  <div className="flex justify-end">
+                  <div className="flex flex-col sm:flex-row sm:justify-end gap-3">
+                    <button
+                      onClick={() => navigate(`/map?workerId=${hire.worker?._id}&hireId=${hire._id}`)}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm hover:shadow-md"
+                    >
+                      <MapPin className="h-4 w-4" />
+                      Track Live Location
+                    </button>
                     <button
                       onClick={() => setRatingModal(hire)}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm hover:shadow-md"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-xl transition-all shadow-sm hover:shadow-md"
                     >
                       <Star className="h-4 w-4" />
                       Rate & Complete

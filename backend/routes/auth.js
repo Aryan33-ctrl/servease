@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
 const authController = require('../controllers/authController');
+const { protect } = require('../middleware/auth');
 
 // Send OTP Endpoint
 router.post('/send-otp', [
@@ -38,5 +39,11 @@ router.post('/reset-password', [
   body('token', 'Reset token is required').not().isEmpty(),
   body('password', 'Please enter a password with 6 or more characters').isLength({ min: 6 })
 ], authController.resetPassword);
+
+// Verify Token Endpoint - Protected route to verify token validity
+router.get('/verify-token', protect, authController.verifyToken);
+
+// Logout Endpoint
+router.post('/logout', protect, authController.logout);
 
 module.exports = router;

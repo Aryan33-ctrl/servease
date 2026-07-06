@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useContext } from 'react';
 import api from '../utils/api';
+import { formatDistanceMeters } from '../utils/distance';
 import { useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
 import { Map, Star, DollarSign, Zap, Clock, ShieldCheck, CheckCircle2, Search, Filter, RefreshCw, X } from 'lucide-react';
 import Toast from '../components/Toast';
 import io from 'socket.io-client';
+import { getApiBaseUrl, isRealtimeEnabled } from '../utils/api';
 
 const SkeletonWorker = () => (
   <div className="p-6 flex flex-col md:flex-row items-center justify-between gap-6 animate-pulse">
@@ -41,6 +43,7 @@ const Dashboard = () => {
   const [socket, setSocket] = useState(null);
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
+  const realtimeEnabled = isRealtimeEnabled();
 
   useEffect(() => {
     if (!user) {
@@ -56,16 +59,22 @@ const Dashboard = () => {
 
     fetchWorkers();
 
-    // Set up socket connection
-    const token = localStorage.getItem('token');
-    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:5000', {
-      auth: { token }
-    });
-    setSocket(newSocket);
+    let newSocket = null;
 
-    newSocket.on('hireUpdate', (data) => {
-      setToast({ message: `Hire request ${data.status} by ${data.workerName}!`, type: data.status === 'accepted' ? 'success' : 'info' });
-    });
+    if (realtimeEnabled) {
+      // Set up socket connection
+      const token = localStorage.getItem('token');
+      newSocket = io(getApiBaseUrl(), {
+        auth: { token }
+      });
+      setSocket(newSocket);
+
+      newSocket.on('hireUpdate', (data) => {
+        setToast({ message: `Hire request ${data.status} by ${data.workerName}!`, type: data.status === 'accepted' ? 'success' : 'info' });
+      });
+    } else {
+      setSocket(null);
+    }
 
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -75,7 +84,11 @@ const Dashboard = () => {
           fetchWorkers(searchQuery, coords);
         },
         () => setLocationError('Location permission denied. Using default search area.'),
-        { timeout: 10000 }
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        }
       );
     }
 
@@ -332,7 +345,9 @@ const Dashboard = () => {
                     <div className="w-px h-10 bg-gray-200 hidden sm:block"></div>
 
                     <div className="flex flex-col items-end min-w-[70px]">
-                      <span className="font-extrabold text-gray-900 text-lg">{Math.round(worker.distance || 0)}m</span>
+                      <span className="font-extrabold text-gray-900 text-lg">
+                        {formatDistanceMeters(worker.distanceMeters ?? worker.distance)}
+                      </span>
                       <span className="text-xs text-gray-400 font-bold tracking-wider uppercase">Distance</span>
                     </div>
                     
