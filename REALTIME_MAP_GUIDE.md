@@ -164,7 +164,7 @@ socket.on('worker-availability-changed', (data) => {...})
 2. Create a new project
 3. Enable "Maps JavaScript API"
 4. Go to Credentials → Create API Key
-5. Copy your API key (looks like: `AIzaSyDyWJOw5r-kLSY8jQ8q8_-4K9L8m9p0q1r`)
+5. Copy your API key and keep it out of git history
 
 ### **Step 2: Add API Key to Environment**
 
